@@ -1,8 +1,21 @@
-"""ASCII syrnik. Python 3.9+, no dependencies.
+"""# ASCII syrnik by JeusDEV.
+
+Python 3.9+, no dependencies.
 
 Run in a terminal with ANSI color support.
 Oversized models fit the window.
 Ctrl+C exits cleanly.
+
+Usage:
+    python syrnik.py                      # default rotation, ASCII shading
+    python syrnik.py -p -m -r             # pixel mode, interactive, reversed movement
+    python syrnik.py -sc 2 -sp 90 -bg -r  # big and fast, no background, reversed rotation
+    python syrnik.py -sy ".:#@" -f 60 -u  # custom ramp, 60 fps, auto rebuild
+
+Enable (-u | --update-build) to rebuild the model on window resize;
+    useful for long sessions, costs a short rebuild pause.
+If (-p | --pixel) is enabled, custom ramp (-sy | --symbols) has no effect.
+If (-m | --manual) is enabled, (-r | --reverse) flips the arrow controls.
 """
 
 import argparse
@@ -13,21 +26,33 @@ import signal
 import sys
 import time
 from contextlib import contextmanager
+from typing import Generator
 
 if os.name == "nt":
     import msvcrt
 
 TAU = math.tau
 ESC = "\x1b["
+RESET = ESC + "0m"
+BG_BLACK = ESC + "40m"
 RAMP = "FUCK,."
 # RAMP = ".,:;irsXAhM"  # ▮
 
-def clamp(x, lo=0.0, hi=1.0):
+RenderResult = tuple[list[str], list[tuple[int, int, int] | None]]
+
+
+def clamp(x, lo=0.0, hi=1.0) -> float:
+    """Clamp x to [lo, hi]."""
     return max(lo, min(hi, x))
 
 
-def grain(x, y, z):
-    """Deterministic, smoothly interpolated 3D value noise."""
+def shak_noise(x, y, z) -> float:
+    """Deterministic interpolated 3D value noise.
+
+    Do not ask how and why. Calculated in my mind.
+
+    "Shak." - (c) mcKisco.
+    """
     ix, iy, iz = math.floor(x), math.floor(y), math.floor(z)
     u, v, w = x - ix, y - iy, z - iz
     u, v, w = u * u * (3 - 2 * u), v * v * (3 - 2 * v), w * w * (3 - 2 * w)
@@ -41,10 +66,12 @@ def grain(x, y, z):
         lerp(lerp(h(ix, iy, iz), h(ix + 1, iy, iz), u),
              lerp(h(ix, iy + 1, iz), h(ix + 1, iy + 1, iz), u), v),
         lerp(lerp(h(ix, iy, iz + 1), h(ix + 1, iy, iz + 1), u),
-             lerp(h(ix, iy + 1, iz + 1), h(ix + 1, iy + 1, iz + 1), u), v), w)
+             lerp(h(ix, iy + 1, iz + 1), h(ix + 1, iy + 1, iz + 1), u), v),
+        w,
+    )
 
 
-def build_model(detail=1.0):
+def build_model(detail=1.0) -> list:
     """Textured in object space rounded thick disk."""
     points = []
     spacing = 0.019 / detail
@@ -73,8 +100,8 @@ def build_model(detail=1.0):
             # Unevenness to make a silhouette
             irregular = 1 + 0.022 * math.sin(3 * a + 0.4) + 0.014 * math.sin(7 * a - 0.8)
             x, z = r * ca * irregular, r * sa * irregular
-            coarse = grain(x * 5 + 11, y * 6 + 9, z * 5 + 17)
-            fine = grain(x * 37 + 51, y * 37 + 31, z * 37 + 29)
+            coarse = shak_noise(x * 5 + 11, y * 6 + 9, z * 5 + 17)
+            fine = shak_noise(x * 37 + 51, y * 37 + 31, z * 37 + 29)
             bump = (fine - 0.5) * 0.018 + (coarse - 0.5) * 0.026
             px, py, pz = x + nr * ca * bump, y + ny * bump, z + nr * sa * bump
             # Colored noise on vertical faces
@@ -83,20 +110,28 @@ def build_model(detail=1.0):
             toast *= face
             color = tuple(int(a0 + (a1 - a0) * toast) for a0, a1 in
                           zip((246, 208, 132), (115, 49, 15)))
-            # Additional small colored grain
-            # if fine < 0.28:
-            #     color = tuple(int(c * 0.73) for c in color)
-            # if fine > 0.76:
-            #     color = tuple(int(c * 0.7 + v * 0.3) for c, v in zip(color, (255, 233, 174)))
             # Normal changes to catch the light
             nx, nz = nr * ca + (fine - 0.5) * 0.17, nr * sa + (coarse - 0.5) * 0.13
             length = math.sqrt(nx * nx + ny * ny + nz * nz)
-            points.append((px, py, pz, nx / length, ny / length, nz / length,
-                           color, fine))
+            # Y-factor
+            if py < 0.0:
+                yf = 1.0 + py * 2.6
+                if yf < 0.0:
+                    yf = 0.0
+                elif yf > 1.0:
+                    yf = 1.0
+            else:
+                yf = 1.0
+            # Forming list of points
+            points.append((
+                px, py, pz,
+                nx / length, ny / length, nz / length,
+                color, fine, yf
+            ))
     return points
 
 
-def render(points, angle, width, height, scale, symbols):
+def render(points, angle, width, height, scale, symbols) -> RenderResult:
     """Perspective projection, back-face culling and a per-character z-buffer."""
     chars = [" "] * (width * height)
     colors = [None] * (width * height)
@@ -105,42 +140,85 @@ def render(points, angle, width, height, scale, symbols):
     # Object spins around upright axis
     ce, se = 0.819152, 0.573576
     zoom = min(35.0 * scale, (width - 4) / 2.25, (height - 3) / 1.11)
-    zoom = max(0.1, zoom)
-    cx, cy = (width - 1) / 2, (height - 1) / 2
-    for x, y, z, nx, ny, nz, base, texture in points:
-        xx, zz = c * x + s * z, -s * x + c * z
-        nnx, nnz = c * nx + s * nz, -s * nx + c * nz
-        yy, depth = ce * y - se * zz, se * y + ce * zz
-        nny, facing = ce * ny - se * nnz, se * ny + ce * nnz
-        if facing <= 0:
+    if zoom < 0.1:
+        zoom = 0.1
+    cx, cy = (width - 1) * 0.5, (height - 1) * 0.5
+    sym_last = len(symbols) - 1
+    w, h = width, height
+    for x, y, z, nx, ny, nz, base, texture, y_factor in points:
+        xx = c * x + s * z
+        zz = -s * x + c * z
+        nnx = c * nx + s * nz
+        nnz = -s * nx + c * nz
+        yy = ce * y - se * zz
+        depth = se * y + ce * zz
+        nny = ce * ny - se * nnz
+        facing = se * ny + ce * nnz
+        if facing <= 0.0:
             continue
         perspective = 5.0 / (5.0 - depth)
+        # Col
         col = int(cx + xx * zoom * perspective + 0.5)
-        row = int(cy - yy * zoom * 0.49 * perspective + 0.5)
-        if col < 0 or col >= width or row < 0 or row >= height:
+        if col < 0 or col >= w:
             continue
-        idx = row * width + col
+        # Row
+        row = int(cy - yy * zoom * 0.49 * perspective + 0.5)
+        if row < 0 or row >= h:
+            continue
+        idx = row * w + col
         if depth <= depths[idx]:
             continue
         depths[idx] = depth
         # Like a post processing
-        diffuse = max(0.0, -0.43 * nnx + 0.66 * nny + 0.615 * facing)
-        light = 0.6 + 0.88 * diffuse  # 0.32 0.68
-        shine = 0.15 * max(0.0, -0.23 * nnx + 0.35 * nny + 0.908 * facing) ** 16
-        final_color = tuple(min(255, int((v * light + 255 * shine) / 8) * 8) for v in base)
-        # Quantized truecolor keeps ANSI traffic modest without flattening shading
-        if y < 0:
-            factor = clamp(1.0 + (y * 2.6), 0.0, 1.0)
-            colors[idx] = tuple(int(c * factor) for c in final_color)
+        d1 = -0.43 * nnx + 0.66 * nny + 0.615 * facing
+        if d1 < 0.0:
+            d1 = 0.0
+        light = 0.6 + 0.88 * d1
+        sh1 = -0.23 * nnx + 0.35 * nny + 0.908 * facing
+        if sh1 > 0.0:
+            shine = 0.15 * sh1 ** 16
         else:
-            colors[idx] = final_color
+            shine = 0.0
+        s255 = 255.0 * shine
+        # Final color
+        br, bg, bb = base
+        r = int((br * light + s255) * 0.125) * 8
+        if r > 255: r = 255
+        g = int((bg * light + s255) * 0.125) * 8
+        if g > 255: g = 255
+        b = int((bb * light + s255) * 0.125) * 8
+        if b > 255: b = 255
+        # Quantized truecolor keeps ANSI traffic modest without flattening shading
+        if y_factor < 1.0:
+            r = int(r * y_factor)
+            g = int(g * y_factor)
+            b = int(b * y_factor)
+        colors[idx] = (r, g, b)
         # Ramp density
-        density = clamp(0.05 + 0.85 * light + 0.10 * (texture - 0.5))
-        chars[idx] = symbols[int(density * (len(symbols) - 1))]
+        density = 0.05 + 0.85 * light + 0.10 * (texture - 0.5)
+        if density < 0.0:
+            density = 0.0
+        elif density > 1.0:
+            density = 1.0
+        chars[idx] = symbols[int(density * sym_last)]
     return chars, colors
 
 
-def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True):
+def compute_detail(scale, width, height) -> float:
+    """Scale detail by window area, bounded for small terminals."""
+    base = min(2.2, max(1.0, scale))
+    area = max(1, width) * max(1, height)
+    ref = 100 * 40
+    if area >= ref:
+        return base
+    factor = (area / ref) ** 0.5
+    if factor < 0.5:
+        factor = 0.5
+    return base * factor
+
+
+def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True) -> str:
+    """Serialize chars + colors into one ANSI frame string."""
     out = [ESC + "H"]
     current_color = None
     ansi_code = "48" if use_pixel_mode else "38"
@@ -160,10 +238,10 @@ def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True
                 char_to_print = chars[idx] if color is not None else " "
             if target_color != current_color:
                 if target_color is None:
-                    out.append(ESC + "0m" if not has_bg else ESC + "0m" + ESC + "40m")
+                    out.append(RESET if not has_bg else RESET + BG_BLACK)
                 else:
                     if not has_bg:
-                        out.append(ESC + "0m")
+                        out.append(RESET)
                     out.append(ESC + f"{ansi_code};2;%d;%d;%dm" % target_color)
                 current_color = target_color
             out.append(char_to_print)
@@ -171,7 +249,7 @@ def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True
 
 
 @contextmanager
-def terminal(bg=True):
+def terminal(bg=True) -> Generator[None, None, None]:
     """Restore the cursor, colors, screen and Windows console mode on exit."""
     win = None
     if os.name == "nt":
@@ -190,20 +268,20 @@ def terminal(bg=True):
             raise RuntimeError("This terminal does not support ANSI colors.")
         win = kernel, handle, mode.value
     try:
-        sys.stdout.write(ESC + "?1049h" + ESC + "?25l" + ESC + "0m" + ((ESC + "40m") if bg else "") + ESC + "2J")
+        sys.stdout.write(ESC + "?1049h" + ESC + "?25l" + RESET + (BG_BLACK if bg else "") + ESC + "2J")
         sys.stdout.flush()
         yield
     finally:
         try:
-            sys.stdout.write(ESC + "0m" + ESC + "?25h" + ESC + "?1049l")
+            sys.stdout.write(RESET + ESC + "?25h" + ESC + "?1049l")
             sys.stdout.flush()
         finally:
             if win:
                 win[0].SetConsoleMode(win[1], win[2])
 
 
-def get_arrow_direction_win():
-    """Input arrows without blocking Windows Console."""
+def get_arrow_direction_win() -> int:
+    """Input arrows without blocking console."""
     direction = 0
     while msvcrt.kbhit():
         ch = msvcrt.getch()
@@ -218,23 +296,30 @@ def get_arrow_direction_win():
     return direction
 
 
-def positive(value):
+def positive(value) -> float:
+    """Means that value cannot be 0 or less than 0."""
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than zero")
     return number
 
 
-def main():
+def main() -> None:
+    """Parse args, then run the render loop until Ctrl+C.
+
+    Rebuilds the model on window resize only with -u.
+    Arrow keys drive rotation in -m mode.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-sc", "--scale", type=positive, default=1.0, help="model size multiplier (default: 1)")
     parser.add_argument("-sp", "--speed", type=positive, default=32.0, help="degrees per second (default: 32)")
-    parser.add_argument("-sy", "--symbols", type=str, default=RAMP, help=f"symbols to render in ascii mode (default: {RAMP})")
+    parser.add_argument("-sy", "--symbols", type=str, default=RAMP, help=f"symbols to render in ascii mode (default: \"{RAMP}\")")
     parser.add_argument("-f", "--fps", type=positive, default=30.0, help="maximum frames per second (default: 30)")
     parser.add_argument("-p", "--pixel", action="store_true", help="color background instead of symbols (default: False)")
-    parser.add_argument("-bg", "--no-background", action="store_false", help="sets a black background (default: True)")
+    parser.add_argument("-bg", "--no-background", action="store_false", help="remove background (default: True)")
     parser.add_argument("-r", "--reverse", action="store_true", help="controls direction of rotation (default: False)")
     parser.add_argument("-m", "--manual", action="store_true", help="enable interactive arrow keys control mode (default: False)")
+    parser.add_argument("-u", "--update-build", action="store_true", help="rebuild model on window resize (default: False)")
     args = parser.parse_args()
     if not sys.stdout.isatty():
         parser.error("(!) run this script directly in a terminal, without redirecting output")
@@ -242,11 +327,11 @@ def main():
     if args.reverse:
         rotation_direction = 1
     symbols_ramp = args.symbols[::-1]
-    # More samples for larger models, with a bounded startup/memory cost.
-    points = build_model(min(2.2, max(1.0, args.scale)))
-    def stop(_signum, _frame):
-        raise KeyboardInterrupt
-    previous = signal.signal(signal.SIGTERM, stop)
+    # Ctrl+C handling
+    previous = signal.signal(signal.SIGTERM, signal.default_int_handler)
+    # More samples for larger models, with a bounded startup/memory cost
+    points = None
+    current_detail = None
     current_angle = 0.0
     current_speed_pct = 0.0
     accel_smoothing = 5.0
@@ -256,16 +341,23 @@ def main():
             start = time.perf_counter()
             last_size = None
             last_frame_time = start
+            buf = sys.stdout.buffer
             while True:
                 frame_start = time.perf_counter()
                 dt = frame_start - last_frame_time
                 last_frame_time = frame_start
                 size = shutil.get_terminal_size((100, 40))
-                # Leave the last column unused to prevent terminal autowrap.
+                # Leave the last column unused to prevent terminal autowrap
                 width, height = max(1, size.columns - 1), max(1, size.lines)
                 if size != last_size:
-                    sys.stdout.write(ESC + "2J")
+                    buf.write((ESC + "2J").encode("ascii"))
                     last_size = size
+                    # First frame always builds, then resizes only with -u
+                    if points is None or args.update_build:
+                        new_detail = compute_detail(args.scale, width, height)
+                        if current_detail is None or abs(new_detail - current_detail) > 1e-9:
+                            points = build_model(new_detail)
+                            current_detail = new_detail
                 if args.manual:
                     target_dir = 0.0
                     if os.name == "nt":
@@ -288,11 +380,11 @@ def main():
                     angle = rotation_direction * math.radians(args.speed) * (frame_start - start) % TAU
                 chars, colors = render(points, angle, width, height, args.scale, symbols_ramp)
                 # Magic
-                sys.stdout.write(encode_frame(
+                buf.write(encode_frame(
                     chars, colors, width, height,
                     args.pixel, args.no_background
-                ))
-                sys.stdout.flush()
+                ).encode("utf-8"))
+                buf.flush()
                 delay = 1.0 / args.fps - (time.perf_counter() - frame_start)
                 if delay > 0:
                     time.sleep(delay)
