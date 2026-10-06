@@ -36,6 +36,8 @@ python syrnik.py -h
 Please enable (-u | --update-build) to rebuild the model on window resize; useful for long sessions, costs a short rebuild pause.
 <br>If it's lagging on window resize check this flag enabled or not.
 
+---
+
 ℹ **DETAILS**:<br>
 If (-p | --pixel) is enabled, custom ramp (-sy | --symbols) has no effect.
 
