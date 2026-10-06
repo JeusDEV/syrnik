@@ -3,6 +3,7 @@
 Python 3.9+, no dependencies.
 
 Run in a terminal with ANSI color support.
+Works on Windows, macOS, and Linux.
 Oversized models fit the window.
 Ctrl+C exits cleanly.
 
@@ -12,10 +13,12 @@ Usage:
     python syrnik.py -sc 2 -sp 90 -bg -r  # big and fast, no background, reversed rotation
     python syrnik.py -sy ".:#@" -f 60 -u  # custom ramp, 60 fps, auto rebuild
 
-Enable (-u | --update-build) to rebuild the model on window resize;
+WARN: Please enable (-u | --update-build) to rebuild the model on window resize;
     useful for long sessions, costs a short rebuild pause.
+    If it's lagging on window resize check this flag enabled or not.
 If (-p | --pixel) is enabled, custom ramp (-sy | --symbols) has no effect.
 If (-m | --manual) is enabled, (-r | --reverse) flips the arrow controls.
+Manual mode (-m) requires an interactive terminal on stdin.
 """
 
 import argparse
@@ -26,10 +29,16 @@ import signal
 import sys
 import time
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 
-if os.name == "nt":
+if sys.platform.startswith("win"):  # static analyzer bypass
+    import ctypes
     import msvcrt
+    from ctypes import wintypes
+else:
+    import select
+    import termios
+    import tty
 
 TAU = math.tau
 ESC = "\x1b["
@@ -38,7 +47,7 @@ BG_BLACK = ESC + "40m"
 RAMP = "FUCK,."
 # RAMP = ".,:;irsXAhM"  # ▮
 
-RenderResult = tuple[list[str], list[tuple[int, int, int] | None]]
+RenderResult = tuple[list[str], list[Optional[tuple[int, int, int]]]]
 
 
 def clamp(x, lo=0.0, hi=1.0) -> float:
@@ -249,12 +258,11 @@ def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True
 
 
 @contextmanager
-def terminal(bg=True) -> Generator[None, None, None]:
-    """Restore the cursor, colors, screen and Windows console mode on exit."""
+def terminal(bg=True, manual=False) -> Generator[None, None, None]:
+    """Restore cursor, colors, screen, and console/terminal modes on exit."""
     win = None
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
+    unix = None
+    if sys.platform.startswith("win"):
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel.GetStdHandle.argtypes = [wintypes.DWORD]
         kernel.GetStdHandle.restype = wintypes.HANDLE
@@ -267,6 +275,11 @@ def terminal(bg=True) -> Generator[None, None, None]:
         if not kernel.SetConsoleMode(handle, mode.value | 0x0004):
             raise RuntimeError("This terminal does not support ANSI colors.")
         win = kernel, handle, mode.value
+    elif manual:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)  # keeps ISIG on, so Ctrl+C still raises SIGINT
+        unix = fd, old_settings
     try:
         sys.stdout.write(ESC + "?1049h" + ESC + "?25l" + RESET + (BG_BLACK if bg else "") + ESC + "2J")
         sys.stdout.flush()
@@ -278,10 +291,13 @@ def terminal(bg=True) -> Generator[None, None, None]:
         finally:
             if win:
                 win[0].SetConsoleMode(win[1], win[2])
+            if unix:
+                fd, old_settings = unix
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def get_arrow_direction_win() -> int:
-    """Input arrows without blocking console."""
+    """Input arrows without blocking on Windows."""
     direction = 0
     while msvcrt.kbhit():
         ch = msvcrt.getch()
@@ -293,6 +309,27 @@ def get_arrow_direction_win() -> int:
                 direction = -1
         elif ch == b'\x03':
             raise KeyboardInterrupt
+    return direction
+
+
+def get_arrow_direction_unix() -> int:
+    """Input arrows without blocking on Unix (Linux, macOS)."""
+    direction = 0
+    while select.select([0], [], [], 0)[0]:
+        ch = os.read(0, 1)
+        if not ch:
+            break
+        if ch == b'\x03':
+            raise KeyboardInterrupt
+        if ch == b'\x1b':
+            # If emulator sending with delay raise it from 0.005 to 0.02
+            if not select.select([0], [], [], 0.005)[0]:
+                continue
+            seq = os.read(0, 2)
+            if seq == b'[C':      # right
+                direction = 1
+            elif seq == b'[D':    # left
+                direction = -1
     return direction
 
 
@@ -321,12 +358,18 @@ def main() -> None:
     parser.add_argument("-m", "--manual", action="store_true", help="enable interactive arrow keys control mode (default: False)")
     parser.add_argument("-u", "--update-build", action="store_true", help="rebuild model on window resize (default: False)")
     args = parser.parse_args()
+    if args.manual and not sys.stdin.isatty():
+        parser.error("(!) -m requires an interactive terminal on stdin")
     if not sys.stdout.isatty():
         parser.error("(!) run this script directly in a terminal, without redirecting output")
-    rotation_direction = -1
     if args.reverse:
         rotation_direction = 1
+    if sys.platform.startswith("win"):
+        arrow_func = get_arrow_direction_win
+    else:
+        arrow_func = get_arrow_direction_unix
     symbols_ramp = args.symbols[::-1]
+    rotation_direction = -1
     # Ctrl+C handling
     previous = signal.signal(signal.SIGTERM, signal.default_int_handler)
     # More samples for larger models, with a bounded startup/memory cost
@@ -337,7 +380,7 @@ def main() -> None:
     accel_smoothing = 5.0
     decel_smoothing = 12.0
     try:
-        with terminal(args.no_background):
+        with terminal(args.no_background, args.manual):
             start = time.perf_counter()
             last_size = None
             last_frame_time = start
@@ -359,9 +402,7 @@ def main() -> None:
                             points = build_model(new_detail)
                             current_detail = new_detail
                 if args.manual:
-                    target_dir = 0.0
-                    if os.name == "nt":
-                        target_dir = float(get_arrow_direction_win())
+                    target_dir = float(arrow_func())
                     if args.reverse:
                         target_dir = -target_dir
                     # Control speed with deltaTime
