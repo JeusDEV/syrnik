@@ -1,4 +1,4 @@
-# 🥞 ASCII syrnik by JeusDEV.
+# 🥞 ASCII syrnik by JeusDEV
 Python 3.9+, no dependencies.<br><br>
 Run in a terminal with ANSI color support.<br>
 Works on Windows, macOS, and Linux.<br>
