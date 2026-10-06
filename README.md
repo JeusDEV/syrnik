@@ -32,10 +32,11 @@ python syrnik.py -h
   # show help menu
 ```
 ---
-⚠ **WARN**:
+⚠ **WARN**:<br>
 Please enable (-u | --update-build) to rebuild the model on window resize; useful for long sessions, costs a short rebuild pause.
 <br>If it's lagging on window resize check this flag enabled or not.
 
+ℹ **DETAILS**:<br>
 If (-p | --pixel) is enabled, custom ramp (-sy | --symbols) has no effect.
 
 If (-m | --manual) is enabled, (-r | --reverse) flips the arrow controls.
@@ -44,7 +45,7 @@ Manual mode (-m) requires an interactive terminal on stdin.
 
 ---
 
-🤞 CREDITS:
-Pchelka TV - baseline support
-mcKisco - ideas & mastermind
+🤞 **CREDITS**:<br>
+Pchelka TV - baseline support<br>
+mcKisco - ideas & mastermind<br>
 UTK initiative (cheri, cbkzly) - fellas
