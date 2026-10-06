@@ -3,7 +3,8 @@ Python 3.9+, no dependencies.<br><br>
 Run in a terminal with ANSI color support.<br>
 Works on Windows, macOS, and Linux.<br>
 Oversized models fit the window.<br>
-Ctrl+C exits cleanly.
+Ctrl+C exits cleanly.<br><br>
+Also has interactive mode! (-m | --manual)
 # 🔽 Setup
 Clone repository:
 ```
@@ -26,6 +27,9 @@ python syrnik.py -sc 2 -sp 90 -bg -r
 
 python syrnik.py -sy ".:#@" -f 60 -u
   # custom ramp, 60 fps, auto rebuild
+
+python syrnik.py -h
+  # show help menu
 ```
 ---
 ⚠ **WARN**:
@@ -37,3 +41,10 @@ If (-p | --pixel) is enabled, custom ramp (-sy | --symbols) has no effect.
 If (-m | --manual) is enabled, (-r | --reverse) flips the arrow controls.
 
 Manual mode (-m) requires an interactive terminal on stdin.
+
+---
+
+🤞 CREDITS:
+Pchelka TV - baseline support
+mcKisco - ideas & mastermind
+UTK initiative (cheri, cbkzly) - fellas
