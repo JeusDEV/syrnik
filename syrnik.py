@@ -45,7 +45,8 @@ MAX_RGB = 255
 ESC = "\x1b["
 RESET = ESC + "0m"
 BG_BLACK = ESC + "40m"
-RAMP = "FUCK,."
+# RAMP = "MhAXsri;:,."
+RAMP = "FUCK,."  # "▮"
 
 RenderResult = tuple[list[str], list[Optional[tuple[int, int, int]]]]
 
@@ -453,6 +454,21 @@ def main() -> None:
         pass
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+class Input:
+    """Cross-platform non-blocking input. Emits events."""
+    pass
+
+
+class Scene:
+    """Syrnik the Great itself. Points, angle, displacement, state."""
+    pass
+
+
+class Arcade:
+    """Base protocol for menu and arcades."""
+    pass
 
 
 if __name__ == "__main__":

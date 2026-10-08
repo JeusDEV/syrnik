@@ -1,5 +1,5 @@
 # 🥞 Syrnik Tvorojnii
-**`ASCII syrnik by JeusDEV`**<br>
+### **`ASCII syrnik by JeusDEV`**<br>
 Python 3.9+, no dependencies.<br><br>
 A point-based renderer featuring procedural texturing, Z-buffering, and Blinn-Phong lighting, outputting frames to an ANSI terminal using true-color SGR sequences. Classic 3D graphics pipeline, condensed to a point-per-character and running entirely within a single Python function.<br><br>
 Run in a terminal with ANSI color support.<br>
@@ -7,7 +7,7 @@ Works on Windows, macOS, and Linux.<br>
 Oversized models fit the window.<br>
 Ctrl+C exits cleanly.
 # 🔽 Setup
-See tags for stable releases!
+**See tags for stable releases!**
 
 Clone repository:
 ```
