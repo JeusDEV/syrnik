@@ -1,4 +1,4 @@
-"""# ASCII syrnik by JeusDEV.
+"""# Syrnik Tvorojnii by JeusDEV v0.0.1.
 
 Python 3.9+, no dependencies.
 
@@ -453,21 +453,6 @@ def main() -> None:
         pass
     finally:
         signal.signal(signal.SIGTERM, previous)
-
-
-class Input:
-    """Cross-platform non-blocking input. Emits events."""
-    pass
-
-
-class Scene:
-    """Syrnik the Great itself. Points, angle, displacement, state."""
-    pass
-
-
-class Arcade:
-    """Base protocol for menu and arcades."""
-    pass
 
 
 if __name__ == "__main__":
