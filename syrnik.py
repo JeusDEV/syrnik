@@ -41,21 +41,21 @@ else:
     import tty
 
 TAU = math.tau
+MAX_RGB = 255
 ESC = "\x1b["
 RESET = ESC + "0m"
 BG_BLACK = ESC + "40m"
 RAMP = "FUCK,."
-# RAMP = ".,:;irsXAhM"  # ▮
 
 RenderResult = tuple[list[str], list[Optional[tuple[int, int, int]]]]
 
 
-def clamp(x, lo=0.0, hi=1.0) -> float:
+def clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     """Clamp x to [lo, hi]."""
     return max(lo, min(hi, x))
 
 
-def shak_noise(x, y, z) -> float:
+def shak_noise(x: float, y: float, z: float) -> float:
     """Deterministic interpolated 3D value noise.
 
     Do not ask how and why. Calculated in my mind.
@@ -80,10 +80,10 @@ def shak_noise(x, y, z) -> float:
     )
 
 
-def build_model(detail=1.0) -> list:
+def build_model(detail: float = 1.0) -> list:
     """Textured in object space rounded thick disk."""
     points = []
-    spacing = 0.019 / detail
+    spacing = 0.019 / float(detail)
     rings = []
     # Horizontal faces
     for side in (1, -1):
@@ -135,12 +135,19 @@ def build_model(detail=1.0) -> list:
             points.append((
                 px, py, pz,
                 nx / length, ny / length, nz / length,
-                color, fine, yf
+                color, fine, yf,
             ))
     return points
 
 
-def render(points, angle, width, height, scale, symbols) -> RenderResult:
+def render(
+    points: list,
+    angle: float,
+    width: int,
+    height: int,
+    scale: float,
+    symbols: str,
+) -> RenderResult:
     """Perspective projection, back-face culling and a per-character z-buffer."""
     chars = [" "] * (width * height)
     colors = [None] * (width * height)
@@ -149,8 +156,7 @@ def render(points, angle, width, height, scale, symbols) -> RenderResult:
     # Object spins around upright axis
     ce, se = 0.819152, 0.573576
     zoom = min(35.0 * scale, (width - 4) / 2.25, (height - 3) / 1.11)
-    if zoom < 0.1:
-        zoom = 0.1
+    zoom = max(zoom, 0.1)
     cx, cy = (width - 1) * 0.5, (height - 1) * 0.5
     sym_last = len(symbols) - 1
     w, h = width, height
@@ -180,23 +186,19 @@ def render(points, angle, width, height, scale, symbols) -> RenderResult:
         depths[idx] = depth
         # Like a post processing
         d1 = -0.43 * nnx + 0.66 * nny + 0.615 * facing
-        if d1 < 0.0:
-            d1 = 0.0
+        d1 = max(d1, 0.0)
         light = 0.6 + 0.88 * d1
         sh1 = -0.23 * nnx + 0.35 * nny + 0.908 * facing
-        if sh1 > 0.0:
-            shine = 0.15 * sh1 ** 16
-        else:
-            shine = 0.0
-        s255 = 255.0 * shine
+        shine = 0.15 * sh1 ** 16 if sh1 > 0.0 else 0.0
+        s255 = float(MAX_RGB) * shine
         # Final color
         br, bg, bb = base
         r = int((br * light + s255) * 0.125) * 8
-        if r > 255: r = 255
+        r = min(r, MAX_RGB)
         g = int((bg * light + s255) * 0.125) * 8
-        if g > 255: g = 255
+        g = min(g, MAX_RGB)
         b = int((bb * light + s255) * 0.125) * 8
-        if b > 255: b = 255
+        b = min(b, MAX_RGB)
         # Quantized truecolor keeps ANSI traffic modest without flattening shading
         if y_factor < 1.0:
             r = int(r * y_factor)
@@ -213,7 +215,7 @@ def render(points, angle, width, height, scale, symbols) -> RenderResult:
     return chars, colors
 
 
-def compute_detail(scale, width, height) -> float:
+def compute_detail(scale: float, width: int, height: int) -> float:
     """Scale detail by window area, bounded for small terminals."""
     base = min(2.2, max(1.0, scale))
     area = max(1, width) * max(1, height)
@@ -221,12 +223,18 @@ def compute_detail(scale, width, height) -> float:
     if area >= ref:
         return base
     factor = (area / ref) ** 0.5
-    if factor < 0.5:
-        factor = 0.5
+    factor = max(factor, 0.5)
     return base * factor
 
 
-def encode_frame(chars, colors, width, height, use_pixel_mode=False, has_bg=True) -> str:
+def encode_frame(
+    chars: list[str],
+    colors: list[Optional[tuple[int, int, int]]],
+    width: int,
+    height: int,
+    use_pixel_mode: bool = False,
+    has_bg: bool = True,
+) -> str:
     """Serialize chars + colors into one ANSI frame string."""
     out = [ESC + "H"]
     current_color = None
@@ -301,13 +309,13 @@ def get_arrow_direction_win() -> int:
     direction = 0
     while msvcrt.kbhit():
         ch = msvcrt.getch()
-        if ch in (b'\xe0', b'\x00'):
+        if ch in (b"\xe0", b"\x00"):
             ch2 = msvcrt.getch()
-            if ch2 == b'M':  # right
+            if ch2 == b"M":  # right
                 direction = 1
-            elif ch2 == b'K':  # left
+            elif ch2 == b"K":  # left
                 direction = -1
-        elif ch == b'\x03':
+        elif ch == b"\x03":
             raise KeyboardInterrupt
     return direction
 
@@ -319,21 +327,21 @@ def get_arrow_direction_unix() -> int:
         ch = os.read(0, 1)
         if not ch:
             break
-        if ch == b'\x03':
+        if ch == b"\x03":
             raise KeyboardInterrupt
-        if ch == b'\x1b':
+        if ch == b"\x1b":
             # If emulator sending with delay raise it from 0.005 to 0.02
             if not select.select([0], [], [], 0.005)[0]:
                 continue
             seq = os.read(0, 2)
-            if seq == b'[C':      # right
+            if seq == b"[C":      # right
                 direction = 1
-            elif seq == b'[D':    # left
+            elif seq == b"[D":    # left
                 direction = -1
     return direction
 
 
-def positive(value) -> float:
+def positive(value: str) -> float:
     """Means that value cannot be 0 or less than 0."""
     number = float(value)
     if not math.isfinite(number) or number <= 0:
@@ -364,17 +372,18 @@ def main() -> None:
         parser.error("(!) run this script directly in a terminal, without redirecting output")
     if args.reverse:
         rotation_direction = 1
+    else:
+        rotation_direction = -1
     if sys.platform.startswith("win"):
         arrow_func = get_arrow_direction_win
     else:
         arrow_func = get_arrow_direction_unix
     symbols_ramp = args.symbols[::-1]
-    rotation_direction = -1
     # Ctrl+C handling
     previous = signal.signal(signal.SIGTERM, signal.default_int_handler)
     # More samples for larger models, with a bounded startup/memory cost
-    points = None
-    current_detail = None
+    points: Optional[list] = None
+    current_detail: Optional[float] = None
     current_angle = 0.0
     current_speed_pct = 0.0
     accel_smoothing = 5.0
@@ -419,11 +428,22 @@ def main() -> None:
                 else:
                     # Standard automatic rotation. Negative yaw moves object clockwise
                     angle = rotation_direction * math.radians(args.speed) * (frame_start - start) % TAU
-                chars, colors = render(points, angle, width, height, args.scale, symbols_ramp)
+                chars, colors = render(
+                    points=points,
+                    angle=angle,
+                    width=width,
+                    height=height,
+                    scale=args.scale,
+                    symbols=symbols_ramp,
+                )
                 # Magic
                 buf.write(encode_frame(
-                    chars, colors, width, height,
-                    args.pixel, args.no_background
+                    chars=chars,
+                    colors=colors,
+                    width=width,
+                    height=height,
+                    use_pixel_mode=args.pixel,
+                    has_bg=args.no_background,
                 ).encode("utf-8"))
                 buf.flush()
                 delay = 1.0 / args.fps - (time.perf_counter() - frame_start)
@@ -433,6 +453,21 @@ def main() -> None:
         pass
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+class Input:
+    """Cross-platform non-blocking input. Emits events."""
+    pass
+
+
+class Scene:
+    """Syrnik the Great itself. Points, angle, displacement, state."""
+    pass
+
+
+class Arcade:
+    """Base protocol for menu and arcades."""
+    pass
 
 
 if __name__ == "__main__":
