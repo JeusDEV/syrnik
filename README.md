@@ -4,7 +4,8 @@ A point-based renderer featuring procedural texturing, Z-buffering, and Blinn-Ph
 Run in a terminal with ANSI color support.<br>
 Works on Windows, macOS, and Linux.<br>
 Oversized models fit the window.<br>
-Ctrl+C exits cleanly.
+Ctrl+C exits cleanly.<br><br>
+Also has interactive mode! (-m | --manual)
 # 🔽 Setup
 Clone repository:
 ```
